@@ -616,6 +616,12 @@ static bool _srandDone; // srand 是否已初始化
 - **BMP 回退机制**：若 GDI+ 初始化失败（如系统无 gdiplus.dll），检测文件头魔数（`"BM"`），若为 BMP 文件则自动回退到 `LoadSpriteBMP`
 - 返回精灵 ID（失败返回 -1）
 
+#### `int LoadSpriteMemory(const void *data, int size)`
+- 从内存中的图片文件字节加载精灵，便于 C 数组或 Windows resource 打包进单 exe
+- `data == NULL` 或 `size <= 0` 返回 -1；调用返回后原始字节不需要保持有效
+- 复用 GDI+ 内存流解码路径，支持 PNG/JPG/BMP/GIF/TIFF；GDI+ 不可用且数据为 BMP 时走 BMP 内存解析后路
+- 成功后像素归 sprite 槽位管理，返回精灵 ID（失败返回 -1）
+
 #### `void FreeSprite(int id)`
 - 释放精灵内存，标记槽位为未使用
 
@@ -730,6 +736,12 @@ static bool _srandDone; // srand 是否已初始化
 - 每次调用分配独立通道，同一 WAV 文件可重叠播放
 - 成功返回通道 ID（正整数），失败返回 -1（文件错误）或 -2（音频设备初始化失败）
 - 音频设备惰性初始化：首次调用时才创建 waveOut 设备
+
+#### `int PlayWAVMemory(const void *data, int size, int repeat = 1, int volume = 1000)`
+- 从内存中的 WAV 文件字节播放音效，便于将音效打包进单 exe
+- 支持 PCM WAV、1/2 声道、8/16 bit；复用现有重采样和软件混音路径
+- `data` 只在调用期间读取，转换后的临时数据播放结束后自动释放，不进入路径缓存
+- 成功返回通道 ID；格式错误返回 -1，音频设备初始化失败返回 -2，通道满返回 -4
 
 #### `int StopWAV(int channel)`
 - 停止指定通道的 WAV 播放

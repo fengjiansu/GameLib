@@ -378,7 +378,7 @@ GameLib.SDL.h
 - `DrawLine` / `DrawRect` / `FillRect` / `DrawCircle` / `FillCircle` / `DrawEllipse` / `FillEllipse` / `DrawTriangle` / `FillTriangle`
 - `DrawText` / `DrawNumber` / `DrawTextScale(w,h)` / `DrawPrintf` / `DrawPrintfScale(w,h)`
 - `Button` / `Checkbox` / `RadioBox` / `ToggleButton`
-- `CreateSprite` / `LoadSpriteBMP` / `LoadSprite` / `FreeSprite`
+- `CreateSprite` / `LoadSpriteBMP` / `LoadSprite` / `LoadSpriteMemory` / `FreeSprite`
 - `DrawSprite` / `DrawSpriteEx` / `DrawSpriteRegion` / `DrawSpriteRegionEx`
 - `DrawSpriteScaled` / `DrawSpriteRotated` / `DrawSpriteFrame` / `DrawSpriteFrameScaled` / `DrawSpriteFrameRotated`
 - `SetSpritePixel` / `GetSpritePixel` / `GetSpriteWidth` / `GetSpriteHeight`
@@ -386,7 +386,7 @@ GameLib.SDL.h
 - `IsKeyDown` / `IsKeyPressed` / `IsKeyReleased`
 - `GetMouseX` / `GetMouseY` / `IsMouseDown` / `IsMousePressed` / `IsMouseReleased`
 - `GetMouseWheelDelta` / `IsActive`
-- `PlayBeep` / `PlayPCM` / `PlayWAV` / `StopWAV` / `IsPlaying` / `SetVolume` / `StopAll` / `SetMasterVolume` / `GetMasterVolume` / `PlayMusic` / `StopMusic` / `IsMusicPlaying`
+- `PlayBeep` / `PlayPCM` / `PlayWAV` / `PlayWAVMemory` / `StopWAV` / `IsPlaying` / `SetVolume` / `StopAll` / `SetMasterVolume` / `GetMasterVolume` / `PlayMusic` / `StopMusic` / `IsMusicPlaying`
 - `Random` / `RectOverlap` / `CircleOverlap` / `PointInRect` / `Distance`
 - `DrawGrid` / `FillCell`
 - `CreateTilemap` / `SaveTilemap` / `LoadTilemap` / `FreeTilemap` / `SetTile` / `GetTile` / `GetTilemapCols` / `GetTilemapRows`
@@ -768,6 +768,12 @@ SDL 版仍保留 `LoadSpriteBMP()`，目的有二：
 
 - 当前实现最终都会继续尝试 `LoadSpriteBMP()` 作为 BMP 后路；因此在没有 `SDL2_image`、初始化失败或 `IMG_Load()` 失败时，BMP 仍可加载，非 BMP 最终仍返回 `-1`。
 
+`LoadSpriteMemory(data, size)` 与 `LoadSprite()` 使用同一套转换语义，但输入是内存中的完整图片文件字节：
+
+- 有 `SDL2_image` 时使用 `SDL_RWFromConstMem()` + `IMG_Load_RW()` 解码 PNG/JPG/GIF 等格式。
+- 没有 `SDL2_image` 或解码失败时，继续用 `SDL_LoadBMP_RW()` 尝试 BMP 内存后路。
+- 成功后像素已拷贝到 GameLib 自己的 sprite 缓冲，调用返回后原始内存不需要继续保持有效。
+
 ### 9.5 DrawSprite 系列
 
 `DrawSprite`、`DrawSpriteEx`、`DrawSpriteRegionEx`、`DrawSpriteScaled`、`DrawSpriteRotated`、`DrawSpriteFrame`、`DrawSpriteFrameScaled`、`DrawSpriteFrameRotated` 的像素语义应与 `GameLib.h` 保持一致：
@@ -821,6 +827,7 @@ SDL 版音频分为两条独立路径（默认模式）：
 与 Win32 主线对齐的多通道音效 API：
 
 - `PlayWAV(filename, repeat, volume)` → 返回通道 ID（正整数），失败返回 -1/-2/-4
+- `PlayWAVMemory(data, size, repeat, volume)` → 从内存 WAV 文件字节播放，返回通道 ID（正整数），失败返回 -1/-2/-4
 - `StopWAV(channel)` → 停止指定通道，成功返回 1，无效通道返回 0
 - `IsPlaying(channel)` → 查询通道是否播放中，返回 1/0
 - `SetVolume(channel, volume)` → 设置通道音量（0~1000），返回新音量值或 -1
@@ -833,6 +840,7 @@ SDL 版音频分为两条独立路径（默认模式）：
 - 使用 `SDL_OpenAudioDevice` 打开独立的音频输出设备，回调模式
 - 自写 WAV 解析、重采样（线性插值，与 GameLib.h 一致）、单声道→立体声转换
 - 所有 WAV 数据统一转换为 44100Hz/stereo/16bit 后缓存复用
+- `PlayWAVMemory` 复用同一 WAV 解析与转换路径，但生成 temporary 数据，播放结束后自动释放，不进入路径缓存
 - 多通道混音：`int32_t` 累加防止溢出，最终钳制到 `int16_t` 范围
 - 通道 ID 用自增 `int64_t` 分配，最大 32 个并发通道
 - 音频设备惰性初始化：首次 `PlayWAV` 时才创建
@@ -842,6 +850,7 @@ SDL 版音频分为两条独立路径（默认模式）：
 
 - 通过 `_EnsureMixerReady()` 初始化 mixer（`Mix_OpenAudio`），不再使用 `SDL_OpenAudioDevice`
 - `PlayWAV` 使用 `Mix_LoadWAV` 加载并缓存 `Mix_Chunk`，通过 `Mix_PlayChannel(-1, chunk, loops)` 播放
+- `PlayWAVMemory` 使用 `SDL_RWFromConstMem()` + `Mix_LoadWAV_RW()` 创建临时 `Mix_Chunk`
 - `PlayPCM` / `PlayBeep` 将 PCM 数据构造为临时 `Mix_Chunk`，通过 `Mix_PlayChannel` 播放；播放完成时通过 `Mix_ChannelFinished` 回调自动释放临时 chunk
 - 返回值为 Mix 通道号（0~31），-1 表示失败
 - 音量映射：公开 API 的 0~1000 线性映射到 `Mix_Chunk.volume` 的 0~128

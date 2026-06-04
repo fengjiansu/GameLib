@@ -72,6 +72,7 @@
 | -------------------------------------------- | ------------------------------- |
 | `CreateSprite(w, h)`                         | 创建空白精灵，返回 ID           |
 | `LoadSprite(filename)`                       | 加载图片精灵（PNG/JPG/BMP/GIF/TIFF，路径按 UTF-8） |
+| `LoadSpriteMemory(data, size)`               | 从内存中的图片文件字节加载精灵（适合 C 数组 / resource 打包） |
 | `LoadSpriteBMP(filename)`                    | 从 BMP 加载精灵（8/24/32-bit，路径按 UTF-8）  |
 | `FreeSprite(id)`                             | 释放精灵                        |
 | `DrawSprite(id, x, y)`                       | 绘制精灵                        |
@@ -114,6 +115,7 @@
 | 函数                        | 说明                     |
 | --------------------------- | ------------------------ |
 | `PlayWAV(filename, repeat, volume)` | 播放音效，返回通道 ID（正整数），失败 -1/-2/-4 |
+| `PlayWAVMemory(data, size, repeat, volume)` | 从内存中的 WAV 文件字节播放音效，返回通道 ID（正整数），失败 -1/-2/-4 |
 | `PlayPCM(pcm, nchannels, nsamples, sample_rate, repeat, volume)` | 播放原始 PCM 数据，返回通道 ID，失败 -1/-2/-4 |
 | `StopWAV(channel)`          | 停止指定通道音效，成功返回 0，无效通道返回 -1 |
 | `IsPlaying(channel)`        | 查询通道是否播放中，返回 1/0 |

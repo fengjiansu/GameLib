@@ -361,6 +361,7 @@ public:
     int CreateSprite(int width, int height);
     int LoadSpriteBMP(const char *filename);
     int LoadSprite(const char *filename);
+    int LoadSpriteMemory(const void *data, int size);
     void FreeSprite(int id);
     void DrawSprite(int id, int x, int y);
     void DrawSpriteEx(int id, int x, int y, int flags);
@@ -392,6 +393,7 @@ public:
 
     int PlayBeep(int frequency, int duration, int repeat = 1, int volume = 1000);
     int PlayWAV(const char *filename, int repeat = 1, int volume = 1000);
+    int PlayWAVMemory(const void *data, int size, int repeat = 1, int volume = 1000);
     int PlayPCM(const int16_t *pcm, int nchannels, int nsamples, int sample_rate, int repeat = 1, int volume = 1000);
     int StopWAV(int channel);
     int IsPlaying(int channel);
@@ -606,6 +608,7 @@ private:
     void _MixAudio(int16_t *output, int sample_count);
     void _ClampAndConvert(int32_t *input, int16_t *output, int count);
     _WavData *_LoadWAVFromFile(const char *filename);
+    _WavData *_LoadWAVFromMemory(const void *data, int size);
     _WavData *_ConvertToTargetFormat(_WavData *src);
     _WavData *_LoadOrCacheWAV(const char *filename);
     int _AllocateChannel();
@@ -3035,6 +3038,62 @@ int GameLib::LoadSpriteBMP(const char *filename)
     return id;
 }
 
+static int _gamelib_sdl_surface_to_sprite(GameLib *game, SDL_Surface *loaded)
+{
+    if (!game || !loaded) return -1;
+
+    SDL_Surface *argb = SDL_ConvertSurfaceFormat(loaded, SDL_PIXELFORMAT_ARGB8888, 0);
+    if (!argb) return -1;
+
+    if (argb->w <= 0 || argb->h <= 0 || argb->w > 16384 || argb->h > 16384) {
+        SDL_FreeSurface(argb);
+        return -1;
+    }
+
+    int id = game->CreateSprite(argb->w, argb->h);
+    if (id < 0) {
+        SDL_FreeSurface(argb);
+        return -1;
+    }
+
+    for (int y = 0; y < argb->h; y++) {
+        const uint32_t *src = (const uint32_t*)((const unsigned char*)argb->pixels + y * argb->pitch);
+        for (int x = 0; x < argb->w; x++) {
+            game->SetSpritePixel(id, x, y, src[x]);
+        }
+    }
+
+    SDL_FreeSurface(argb);
+    return id;
+}
+
+int GameLib::LoadSpriteMemory(const void *data, int size)
+{
+    if (!data || size <= 0) return -1;
+
+#if GAMELIB_SDL_HAS_IMAGE
+    if (_EnsureImageReady()) {
+        SDL_RWops *rw = SDL_RWFromConstMem(data, size);
+        if (rw) {
+            SDL_Surface *loaded = IMG_Load_RW(rw, 1);
+            if (loaded) {
+                int id = _gamelib_sdl_surface_to_sprite(this, loaded);
+                SDL_FreeSurface(loaded);
+                if (id >= 0) return id;
+            }
+        }
+    }
+#endif
+
+    SDL_RWops *bmpRw = SDL_RWFromConstMem(data, size);
+    if (!bmpRw) return -1;
+    SDL_Surface *bmp = SDL_LoadBMP_RW(bmpRw, 1);
+    if (!bmp) return -1;
+    int id = _gamelib_sdl_surface_to_sprite(this, bmp);
+    SDL_FreeSurface(bmp);
+    return id;
+}
+
 int GameLib::LoadSprite(const char *filename)
 {
     if (!filename) return -1;
@@ -4571,83 +4630,109 @@ void GameLib::_MixAudio(int16_t *output_buffer, int sample_count)
     _ClampAndConvert(_mix_buffer, output_buffer, sample_count);
 }
 
+static uint16_t _gamelib_sdl_read_u16le(const unsigned char *p)
+{
+    return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
+}
+
+static uint32_t _gamelib_sdl_read_u32le(const unsigned char *p)
+{
+    return (uint32_t)((uint32_t)p[0] |
+                      ((uint32_t)p[1] << 8) |
+                      ((uint32_t)p[2] << 16) |
+                      ((uint32_t)p[3] << 24));
+}
+
+GameLib::_WavData *GameLib::_LoadWAVFromMemory(const void *data, int size)
+{
+    if (!data || size < 12) return NULL;
+
+    const unsigned char *bytes = (const unsigned char*)data;
+
+    if (bytes[0] != 'R' || bytes[1] != 'I' || bytes[2] != 'F' || bytes[3] != 'F') {
+        return NULL;
+    }
+    if (bytes[8] != 'W' || bytes[9] != 'A' || bytes[10] != 'V' || bytes[11] != 'E') {
+        return NULL;
+    }
+
+    uint16_t audio_format = 0;
+    uint16_t channels = 0;
+    uint32_t sample_rate = 0;
+    uint16_t bits_per_sample = 0;
+    const unsigned char *sample_data = NULL;
+    uint32_t sample_size = 0;
+
+    int offset = 12;
+    while (offset + 8 <= size) {
+        const unsigned char *chunk = bytes + offset;
+        uint32_t chunk_size = _gamelib_sdl_read_u32le(chunk + 4);
+        int data_offset = offset + 8;
+        if (chunk_size > (uint32_t)(size - data_offset)) break;
+
+        if (chunk[0] == 'f' && chunk[1] == 'm' &&
+            chunk[2] == 't' && chunk[3] == ' ') {
+            if (chunk_size >= 16) {
+                audio_format = _gamelib_sdl_read_u16le(bytes + data_offset + 0);
+                channels = _gamelib_sdl_read_u16le(bytes + data_offset + 2);
+                sample_rate = _gamelib_sdl_read_u32le(bytes + data_offset + 4);
+                bits_per_sample = _gamelib_sdl_read_u16le(bytes + data_offset + 14);
+            }
+        } else if (chunk[0] == 'd' && chunk[1] == 'a' &&
+                   chunk[2] == 't' && chunk[3] == 'a') {
+            sample_data = bytes + data_offset;
+            sample_size = chunk_size;
+        }
+
+        offset = data_offset + (int)chunk_size + (int)(chunk_size & 1);
+    }
+
+    if (audio_format != 1 || channels == 0 || channels > 2 ||
+        sample_rate == 0 || (bits_per_sample != 8 && bits_per_sample != 16) ||
+        !sample_data || sample_size == 0 || sample_size > 100 * 1024 * 1024) {
+        return NULL;
+    }
+
+    _WavData *wav = new _WavData();
+    wav->channels = channels;
+    wav->sample_rate = sample_rate;
+    wav->bits_per_sample = bits_per_sample;
+    wav->size = sample_size;
+    wav->buffer = new uint8_t[wav->size];
+    memcpy(wav->buffer, sample_data, wav->size);
+
+    _WavData *converted = _ConvertToTargetFormat(wav);
+    delete wav;
+    return converted;
+}
+
 GameLib::_WavData *GameLib::_LoadWAVFromFile(const char *filename)
 {
     FILE *f = fopen(filename, "rb");
     if (!f) return NULL;
 
-    char header[44];
-    if (fread(header, 1, 44, f) != 44) {
+    fseek(f, 0, SEEK_END);
+    long fileSize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (fileSize <= 0 || fileSize > 100 * 1024 * 1024 || fileSize > 0x7fffffffL) {
         fclose(f);
         return NULL;
     }
 
-    if (header[0] != 'R' || header[1] != 'I' || header[2] != 'F' || header[3] != 'F') {
+    unsigned char *fileData = (unsigned char*)malloc((size_t)fileSize);
+    if (!fileData) {
         fclose(f);
         return NULL;
     }
-    if (header[8] != 'W' || header[9] != 'A' || header[10] != 'V' || header[11] != 'E') {
-        fclose(f);
-        return NULL;
-    }
-
-    uint16_t audio_format = (uint16_t)(header[20] | (header[21] << 8));
-    if (audio_format != 1) {
-        fclose(f);
-        return NULL;
-    }
-
-    _WavData *wav = new _WavData();
-    wav->channels = (uint16_t)((uint8_t)header[22] | ((uint8_t)header[23] << 8));
-    wav->sample_rate = (uint32_t)((uint8_t)header[24] | ((uint8_t)header[25] << 8) |
-                                   ((uint8_t)header[26] << 16) | ((uint8_t)header[27] << 24));
-    wav->bits_per_sample = (uint16_t)((uint8_t)header[34] | ((uint8_t)header[35] << 8));
-
-    if (wav->channels == 0 || wav->channels > 2) {
-        delete wav; fclose(f); return NULL;
-    }
-    if (wav->sample_rate == 0) {
-        delete wav; fclose(f); return NULL;
-    }
-    if (wav->bits_per_sample != 8 && wav->bits_per_sample != 16) {
-        delete wav; fclose(f); return NULL;
-    }
-
-    // Find data chunk
-    fseek(f, 12, SEEK_SET);
-    bool found_data = false;
-    while (!found_data) {
-        char chunk_id[4];
-        uint32_t chunk_size = 0;
-        if (fread(chunk_id, 1, 4, f) != 4) break;
-        if (fread(&chunk_size, 4, 1, f) != 1) break;
-        if (chunk_id[0] == 'd' && chunk_id[1] == 'a' &&
-            chunk_id[2] == 't' && chunk_id[3] == 'a') {
-            found_data = true;
-            wav->size = chunk_size;
-        } else {
-            uint32_t skip = chunk_size + (chunk_size % 2);
-            fseek(f, skip, SEEK_CUR);
-        }
-    }
-
-    if (!found_data || wav->size == 0 || wav->size > 100 * 1024 * 1024) {
-        delete wav;
-        fclose(f);
-        return NULL;
-    }
-
-    wav->buffer = new uint8_t[wav->size];
-    if (fread(wav->buffer, 1, wav->size, f) != wav->size) {
-        delete wav;
+    if ((long)fread(fileData, 1, (size_t)fileSize, f) != fileSize) {
+        free(fileData);
         fclose(f);
         return NULL;
     }
 
     fclose(f);
-
-    _WavData *converted = _ConvertToTargetFormat(wav);
-    delete wav;
+    _WavData *converted = _LoadWAVFromMemory(fileData, (int)fileSize);
+    free(fileData);
     return converted;
 }
 
@@ -4821,6 +4906,61 @@ int GameLib::PlayWAV(const char *filename, int repeat, int volume)
     int ch_id = _AllocateChannel();
     if (ch_id == 0) {
         SDL_UnlockAudioDevice(_audioDevice);
+        return -4;
+    }
+
+    _Channel *ch = new _Channel();
+    ch->id = ch_id;
+    ch->wav = wav;
+    ch->position = 0;
+    ch->repeat = repeat;
+    ch->volume = (volume < 0) ? 0 : (volume > 1000 ? 1000 : volume);
+    ch->is_playing = true;
+    _audio_channels[ch_id] = ch;
+    SDL_UnlockAudioDevice(_audioDevice);
+
+    return ch_id;
+#endif
+}
+
+int GameLib::PlayWAVMemory(const void *data, int size, int repeat, int volume)
+{
+    if (!data || size <= 0) return -1;
+#if GAMELIB_SDL_USE_MIXER_CHANNELS
+    if (!_EnsureMixerReady()) return -2;
+
+    SDL_RWops *rw = SDL_RWFromConstMem(data, size);
+    if (!rw) return -1;
+    Mix_Chunk *chunk = Mix_LoadWAV_RW(rw, 1);
+    if (!chunk) return -1;
+
+    int v = (volume < 0) ? 0 : (volume > 1000 ? 1000 : volume);
+    chunk->volume = (Uint8)(v * 128 / 1000);
+
+    int loops = (repeat <= 0) ? -1 : (repeat - 1);
+    int ch = Mix_PlayChannel(-1, chunk, loops);
+    if (ch < 0) {
+        Mix_FreeChunk(chunk);
+        return -4;
+    }
+
+    _temp_chunks[ch] = chunk;
+    return ch;
+#else
+    if (!_audio_initialized) {
+        _audio_initialized = _InitAudioBackend();
+        if (!_audio_initialized) return -2;
+    }
+
+    _WavData *wav = _LoadWAVFromMemory(data, size);
+    if (!wav) return -1;
+    wav->temporary = true;
+
+    SDL_LockAudioDevice(_audioDevice);
+    int ch_id = _AllocateChannel();
+    if (ch_id == 0) {
+        SDL_UnlockAudioDevice(_audioDevice);
+        delete wav;
         return -4;
     }
 

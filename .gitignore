@@ -45,6 +45,7 @@
 /.claude/*
 /.ferrite/*
 /.vscode/*
+/.codex/*
 
 /scratch/*
 /publish/*

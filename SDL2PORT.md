@@ -160,9 +160,9 @@ Windows 下如果使用动态库版本，需要让运行时能找到这些 DLL�
 
 ### 5.3 可选能力限制
 
-- 没有 `SDL2_image` 时，`LoadSprite()` 最终只剩 BMP 后路；PNG/JPG/GIF 等格式不会可用。
+- 没有 `SDL2_image` 时，`LoadSprite()` / `LoadSpriteMemory()` 最终只剩 BMP 后路；PNG/JPG/GIF 等格式不会可用。
 - 没有 `SDL2_ttf` 时，`DrawTextFont()` / `DrawPrintfFont()` 不可用，字体测量函数返回 0。
-- 没有 `SDL2_mixer` 时，`PlayWAV()` / `PlayMusic()` 的高层路径不可用，但 `PlayBeep()` 仍可走 plain SDL audio 兜底。
+- 没有 `SDL2_mixer` 时，`PlayMusic()` 的高层路径不可用；`PlayWAV()`、`PlayWAVMemory()`、`PlayBeep()` 仍可走 plain SDL audio 兜底。
 
 ### 5.4 音乐格式支持
 

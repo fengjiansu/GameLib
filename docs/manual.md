@@ -1136,6 +1136,32 @@ int LoadSprite(const char *filename);
 
 ---
 
+### LoadSpriteMemory
+
+从内存中的图片文件字节加载精灵，适合将图片作为 C 数组或 Windows resource 打包进 exe。
+
+**函数声明**
+```cpp
+int LoadSpriteMemory(const void *data, int size);
+```
+
+**参数**
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `data` | `const void *` | 图片文件完整字节内容（PNG/JPG/BMP/GIF/TIFF 等） |
+| `size` | `int` | 字节数 |
+
+**返回值**
+
+精灵 ID，失败返回 `-1`。
+
+**备注**
+
+调用时会立即读取并解码 `data`，成功后像素归库内部管理，调用返回后原始内存不需要继续保持有效。Win32 版复用 GDI+ 内存流解码；GDI+ 不可用且数据为 BMP 时会走 BMP 内存解析后路。
+
+---
+
 ### LoadSpriteBMP
 
 从 BMP 文件加载精灵，支持 8/24/32-bit。
@@ -1773,6 +1799,34 @@ int PlayWAV(const char *filename, int repeat = 1, int volume = 1000);
 **备注**
 
 使用 waveOut 软件混音器播放。同一 WAV 文件可重叠播放（每次分配独立通道）。WAV 文件按 `filename` 缓存，重复播放同一文件不重新读取。音频设备惰性初始化，首次调用时才创建 waveOut 设备。与 `PlayMusic` 独立通道，可同时播放。
+
+---
+
+### PlayWAVMemory
+
+从内存中的 WAV 文件字节播放音效（异步，多通道），适合将音效作为 C 数组或 Windows resource 打包进 exe。
+
+**函数声明**
+```cpp
+int PlayWAVMemory(const void *data, int size, int repeat = 1, int volume = 1000);
+```
+
+**参数**
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `data` | `const void *` | WAV 文件完整字节内容 |
+| `size` | `int` | 字节数 |
+| `repeat` | `int` | 播放次数，≤0 为无限循环，默认 1（单次播放），>1 递减 |
+| `volume` | `int` | 通道音量 0~1000，默认 1000 |
+
+**返回值**
+
+成功返回通道 ID（正整数），WAV 数据错误返回 -1，音频设备初始化失败返回 -2，通道数量达到上限返回 -4。
+
+**备注**
+
+支持 PCM WAV、1/2 声道、8/16 bit，并转换为内部 44100Hz 立体声 16-bit 格式。`data` 只在调用期间读取，调用返回后原始内存不需要继续保持有效。内存 WAV 不进入按路径缓存，同一数组重复播放会重复解析。
 
 ---
 
